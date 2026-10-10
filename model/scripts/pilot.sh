@@ -8,7 +8,8 @@
 #   RUN_DIR (runs/pilot), PRESET (pilot-300m), STEPS (20000), BATCH (8), ACCUM (4),
 #   VOCAB (32000), QAT_FRAC (0.9), TEACHER_HF (unset = no distillation)
 #
-# Pilot budget: 300M params * ~2B tokens (about 6x Chinchilla) on one 24 GB GPU.
+# Pilot budget: set STEPS for your token target. 32,768 tokens per step at the defaults, so
+# 20,000 steps is about 0.66B tokens. Chinchilla-optimal for 300M params is about 6B tokens.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
