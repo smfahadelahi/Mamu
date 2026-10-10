@@ -26,6 +26,7 @@ from torch.utils.data import DataLoader
 from data.dataset import TokenShards
 from mobile_lm import MobileLM, MobileLMConfig, count_parameters
 from mobile_lm.losses import ce_loss, distill_loss
+from mobile_lm.presets import get_preset
 from mobile_lm.qat import enable_qat
 
 TeacherFn = Callable[[torch.Tensor], torch.Tensor]
@@ -70,6 +71,23 @@ def save_checkpoint(model: MobileLM, optimizer, step: int, out_dir: str, qat: bo
     return path
 
 
+@torch.no_grad()
+def evaluate(model: MobileLM, loader: DataLoader, device: str, max_batches: int) -> float:
+    """Mean next-token cross-entropy over up to max_batches validation batches."""
+    was_training = model.training
+    model.eval()
+    total, n = 0.0, 0
+    for i, batch in enumerate(loader):
+        if i >= max_batches:
+            break
+        batch = batch.to(device)
+        loss = ce_loss(model(batch[:, :-1]).logits, batch[:, 1:])
+        total += loss.item()
+        n += 1
+    model.train(was_training)
+    return total / max(1, n)
+
+
 def train(
     cfg: MobileLMConfig,
     shard_dir: str,
@@ -90,6 +108,8 @@ def train(
     log_every: int = 50,
     ckpt_every: int = 1000,
     resume: str | None = None,
+    eval_every: int = 500,
+    eval_batches: int = 20,
 ) -> dict:
     torch.manual_seed(seed)
     model = MobileLM(cfg).to(device)
@@ -113,6 +133,17 @@ def train(
     # Skip batches already consumed before a resume so data order stays the same.
     for _ in range(start_step * grad_accum):
         next(it)
+
+    # Validation is optional: a tiny corpus can produce no val shards.
+    try:
+        val_data = TokenShards(shard_dir, "val", cfg.max_seq_len,
+                               samples=eval_batches * batch_size, seed=seed + 1)
+        val_loader = DataLoader(val_data, batch_size=batch_size, num_workers=0)
+    except FileNotFoundError:
+        val_loader = None
+        print("no validation shards found; skipping validation loss")
+    os.makedirs(out_dir, exist_ok=True)
+    metrics_path = os.path.join(out_dir, "metrics.jsonl")
 
     qat_step = None if qat_start_frac is None else int(steps * qat_start_frac)
     use_bf16 = device.startswith("cuda") and torch.cuda.is_bf16_supported()
@@ -153,8 +184,14 @@ def train(
         if (step + 1) % log_every == 0:
             avg = sum(history[-log_every:]) / log_every
             rate = (step + 1 - start_step) / (time.time() - t0)
-            print(f"step {step + 1}/{steps} loss {avg:.4f} lr {optimizer.param_groups[0]['lr']:.2e} "
-                  f"({rate:.2f} steps/s)")
+            record = {"step": step + 1, "train_loss": avg,
+                      "lr": optimizer.param_groups[0]["lr"], "steps_per_s": rate}
+            if val_loader is not None and ((step + 1) % eval_every == 0 or step + 1 == steps):
+                record["val_loss"] = evaluate(model, val_loader, device, eval_batches)
+            with open(metrics_path, "a") as f:
+                f.write(json.dumps(record) + "\n")
+            print(" ".join(f"{k} {v:.4f}" if isinstance(v, float) else f"{k} {v}"
+                           for k, v in record.items()))
         if (step + 1) % ckpt_every == 0:
             print("saved", save_checkpoint(model, optimizer, step + 1, out_dir, qat_converted))
 
@@ -179,7 +216,12 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--shards", required=True)
     p.add_argument("--out", required=True)
-    p.add_argument("--config-json", help="JSON file with MobileLMConfig fields (default: 1.5B preset)")
+    p.add_argument("--preset", default="pilot-300m", help="named config (see mobile_lm/presets.py)")
+    p.add_argument("--config-json", help="JSON file with MobileLMConfig fields; overrides --preset")
+    p.add_argument("--tokenizer", help="tokenizer.model; checked against the config's vocab_size")
+    p.add_argument("--eval-every", type=int, default=500)
+    p.add_argument("--log-every", type=int, default=50)
+    p.add_argument("--ckpt-every", type=int, default=1000)
     p.add_argument("--steps", type=int, required=True)
     p.add_argument("--batch-size", type=int, default=8)
     p.add_argument("--grad-accum", type=int, default=8)
@@ -193,7 +235,16 @@ def main() -> None:
     p.add_argument("--resume")
     args = p.parse_args()
 
-    cfg = MobileLMConfig(**json.load(open(args.config_json))) if args.config_json else MobileLMConfig()
+    if args.config_json:
+        with open(args.config_json) as f:
+            cfg = MobileLMConfig(**json.load(f))
+    else:
+        cfg = get_preset(args.preset)
+    if args.tokenizer:
+        import sentencepiece as spm
+        tok_vocab = spm.SentencePieceProcessor(model_file=args.tokenizer).vocab_size()
+        if tok_vocab != cfg.vocab_size:
+            raise SystemExit(f"tokenizer has {tok_vocab} tokens but config vocab_size is {cfg.vocab_size}")
     teacher = load_hf_teacher(args.teacher_hf, args.device) if args.teacher_hf else None
     train(
         cfg=cfg,
@@ -210,6 +261,9 @@ def main() -> None:
         teacher=teacher,
         device=args.device,
         resume=args.resume,
+        eval_every=args.eval_every,
+        log_every=args.log_every,
+        ckpt_every=args.ckpt_every,
     )
 
 

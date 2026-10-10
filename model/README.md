@@ -48,6 +48,24 @@ LLAMA_CPP_DIR=/path/to/llama.cpp export/gguf.sh export/hf export/gguf
 python tools/compare_logits.py ./llama_logits_probe runs/qat/ckpt_0100000.pt export/gguf/model-f16.gguf
 ```
 
+## Pilot run (recommended first step)
+
+`pilot-300m` (303M parameters) runs on one 24 GB consumer GPU. Use it to check
+the corpus, the tokenizer, validation loss, and the phone app before the full run.
+
+```bash
+CORPUS_GLOB='corpus/*.txt' LLAMA_CPP_DIR=/path/to/llama.cpp \
+  STEPS=20000 BATCH=8 ACCUM=4 scripts/pilot.sh
+```
+
+- Budget: 8 × 4 × 1024 tokens per step, so about 0.33M tokens per step. 20,000 steps is about 6.5B
+  tokens; reduce STEPS to match the time you have.
+- Progress: `runs/pilot/metrics.jsonl` records train loss, validation loss (every 500 steps),
+  and throughput. Validation needs `val_*.bin` shards, which the tokenizer step makes
+  from about 0.5% of documents. A small corpus may produce none.
+- The script resumes from the newest checkpoint if you rerun it.
+- Check `runs/pilot/metrics.jsonl` against the phone app's output quality before scaling to 1.5B.
+
 ## What is verified (CPU tests and a tiny end-to-end run)
 
 - The model's logits match Hugging Face `LlamaForCausalLM` on the same weights.
@@ -59,7 +77,7 @@ python tools/compare_logits.py ./llama_logits_probe runs/qat/ckpt_0100000.pt exp
 
 ## Not verified here
 
-- Real-scale training. This sandbox has no GPU, so the 1.5B run and its throughput are untested.
+- Real-scale training. This sandbox has no GPU and too little RAM for 300M-parameter training, so the pilot and 1.5B runs are untested here. The CLI and training loop were exercised on tiny models only.
 - Distillation from a real teacher. Teacher logits must share the student's token IDs.
   Teachers with a different tokenizer (for example Qwen or Llama 3) need precomputed
   top-k logits aligned to the student's tokens. That is not implemented.

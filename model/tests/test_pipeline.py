@@ -181,3 +181,29 @@ def test_qat_export_matches_qat_forward():
     ids = torch.randint(0, cfg.vocab_size, (1, 9))
     with torch.no_grad():
         torch.testing.assert_close(ours(ids).logits, hf(input_ids=ids).logits, rtol=1e-4, atol=1e-4)
+
+
+def test_validation_loss_logged(tmp_path):
+    import json
+    arr = (np.arange(20000, dtype=np.uint32) * 7 % 257).astype(np.uint16)
+    shards = tmp_path / "shards"
+    shards.mkdir()
+    arr.tofile(shards / "train_00000.bin")
+    arr[:5000].tofile(shards / "val_00000.bin")
+    out = str(tmp_path / "run")
+    train(tiny_cfg(max_seq_len=32), str(shards), out, steps=4, batch_size=2, grad_accum=1,
+          lr=1e-3, warmup=1, log_every=2, eval_every=2, eval_batches=2)
+    records = [json.loads(l) for l in open(os.path.join(out, "metrics.jsonl"))]
+    assert [r["step"] for r in records] == [2, 4]
+    assert "val_loss" in records[0] and "val_loss" in records[1]
+    assert np.isfinite(records[-1]["val_loss"])
+
+
+def test_presets_sizes():
+    from mobile_lm.presets import get_preset
+    pilot = get_preset("pilot-300m")
+    assert 280e6 < pilot.param_count() < 330e6
+    assert pilot.ffn_hidden % 32 == 0 and pilot.d_model % 32 == 0
+    assert 1.4e9 < get_preset("mobile-1.5b").param_count() < 1.6e9
+    with pytest.raises(KeyError):
+        get_preset("nope")
