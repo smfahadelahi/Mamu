@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# Android / Gradle
+android/.gradle/
+android/**/build/
+android/local.properties
+*.iml
+.idea/
+
+# Model artifacts and datasets (keep out of Git; use external storage)
+*.gguf
+*.pte
+*.safetensors
+*.bin
+data/
+checkpoints/
