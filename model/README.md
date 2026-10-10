@@ -58,8 +58,8 @@ CORPUS_GLOB='corpus/*.txt' LLAMA_CPP_DIR=/path/to/llama.cpp \
   STEPS=20000 BATCH=8 ACCUM=4 scripts/pilot.sh
 ```
 
-- Budget: 8 × 4 × 1024 tokens per step, so about 0.33M tokens per step. 20,000 steps is about 6.5B
-  tokens; reduce STEPS to match the time you have.
+- Budget: 8 × 4 × 1024 = 32,768 tokens per step. 20,000 steps is about 0.66B tokens, which is only
+  about 2× Chinchilla for 300M parameters. For a 2B-token pilot set STEPS to about 61,000.
 - Progress: `runs/pilot/metrics.jsonl` records train loss, validation loss (every 500 steps),
   and throughput. Validation needs `val_*.bin` shards, which the tokenizer step makes
   from about 0.5% of documents. A small corpus may produce none.
