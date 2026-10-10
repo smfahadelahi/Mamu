@@ -36,11 +36,15 @@ def build_rope_cache(head_dim: int, max_len: int, theta: float) -> tuple[torch.T
 
 
 def apply_rope(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-    """x: (batch, heads, seq, head_dim); cos/sin: (seq, head_dim/2)."""
-    x1, x2 = x[..., 0::2], x[..., 1::2]
-    out1 = x1 * cos - x2 * sin
-    out2 = x1 * sin + x2 * cos
-    return torch.stack((out1, out2), dim=-1).flatten(-2)
+    """Rotate-half RoPE (Hugging Face LLaMA convention).
+
+    Pairs dimension i with i + head_dim/2, so exported weights load directly into
+    LlamaForCausalLM and llama.cpp's "llama" architecture without permutation.
+    x: (batch, heads, seq, head_dim); cos/sin: (seq, head_dim/2).
+    """
+    half = x.shape[-1] // 2
+    x1, x2 = x[..., :half], x[..., half:]
+    return torch.cat((x1 * cos - x2 * sin, x2 * cos + x1 * sin), dim=-1)
 
 
 class Attention(nn.Module):
