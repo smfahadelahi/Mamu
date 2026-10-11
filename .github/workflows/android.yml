@@ -68,6 +68,18 @@ jobs:
           set -o pipefail
           gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
+      - name: Report build errors as annotations
+        if: failure()
+        run: |
+          # Blob storage (logs/artifacts) may be unreachable from some networks, so surface
+          # the key error lines as check annotations, which the GitHub API exposes.
+          grep -nE "^e: |error:|What went wrong|FAILURE|Could not|Caused by|CMake Error|ninja: |Execution failed|> Task|\* What" "$GITHUB_WORKSPACE/build.log" \
+            | head -60 | while IFS= read -r line; do
+                echo "::error title=build error::${line//$'\n'/ }"
+              done
+          echo "----- last 120 lines -----"
+          tail -n 120 "$GITHUB_WORKSPACE/build.log"
+
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
