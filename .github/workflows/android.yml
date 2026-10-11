@@ -1,0 +1,92 @@
+name: Android APK
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Pinned so builds are reproducible. Update together with the NDK and CMake versions.
+  LLAMA_CPP_REPO: https://github.com/ggml-org/llama.cpp.git
+  LLAMA_CPP_COMMIT: 23b0202a189c44a54625aadcb37a946dd1d6278d
+  NDK_VERSION: 26.3.11579264
+  CMAKE_VERSION: 3.22.1
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: android
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Android SDK components
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses > /dev/null
+          "$SDKMANAGER" --install \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;${NDK_VERSION}" \
+            "cmake;${CMAKE_VERSION}"
+
+      - name: Fetch llama.cpp at the pinned commit
+        working-directory: android/app/src/main/cpp
+        run: |
+          git init llama.cpp
+          git -C llama.cpp remote add origin "$LLAMA_CPP_REPO"
+          git -C llama.cpp fetch --depth 1 origin "$LLAMA_CPP_COMMIT"
+          git -C llama.cpp checkout --detach FETCH_HEAD
+          git -C llama.cpp rev-parse HEAD
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
+      - name: Build debug APK
+        run: gradle :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Rename APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/MobileLLM-debug.apk"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MobileLLM-debug-apk
+          path: MobileLLM-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub release for version tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK="$GITHUB_WORKSPACE/MobileLLM-debug.apk"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$APK" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$APK" \
+              --title "Mobile LLM $GITHUB_REF_NAME" \
+              --notes "Debug-signed APK for arm64-v8a Android 8.0+ (API 26+). Install it, then pick a .gguf model file in the app."
+          fi

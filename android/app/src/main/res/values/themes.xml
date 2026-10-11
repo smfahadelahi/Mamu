@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose supplies the real Material 3 theme; this only sets the window background. -->
+    <style name="Theme.MobileLLM" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

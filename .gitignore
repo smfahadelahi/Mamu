@@ -18,3 +18,6 @@ android/local.properties
 *.bin
 /data/
 /checkpoints/
+
+# llama.cpp is fetched at build time (see android/README.md and CI); do not commit it
+android/app/src/main/cpp/llama.cpp/
