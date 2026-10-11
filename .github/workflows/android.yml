@@ -71,14 +71,12 @@ jobs:
       - name: Report build errors as annotations
         if: failure()
         run: |
-          # Blob storage (logs/artifacts) may be unreachable from some networks, so surface
-          # the key error lines as check annotations, which the GitHub API exposes.
-          grep -nE "^e: |error:|What went wrong|FAILURE|Could not|Caused by|CMake Error|ninja: |Execution failed|> Task|\* What" "$GITHUB_WORKSPACE/build.log" \
-            | head -60 | while IFS= read -r line; do
-                echo "::error title=build error::${line//$'\n'/ }"
-              done
-          echo "----- last 120 lines -----"
-          tail -n 120 "$GITHUB_WORKSPACE/build.log"
+          # Logs and artifacts can be unreachable from some networks; the GitHub API does expose
+          # check annotations, so publish the final build output line by line (in order).
+          tail -n 100 "$GITHUB_WORKSPACE/build.log" | cut -c1-500 | while IFS= read -r line; do
+            [ -n "$line" ] && echo "::error title=build output::$line"
+          done
+          echo "::error title=build output::(end of build output)"
 
       - name: Upload build log
         if: always()
