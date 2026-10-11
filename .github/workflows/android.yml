@@ -72,11 +72,15 @@ jobs:
         if: failure()
         run: |
           # Logs and artifacts can be unreachable from some networks; the GitHub API does expose
-          # check annotations, so publish the final build output line by line (in order).
-          tail -n 100 "$GITHUB_WORKSPACE/build.log" | cut -c1-500 | while IFS= read -r line; do
+          # check annotations, so publish the first error region of the build output in order.
+          LOG="$GITHUB_WORKSPACE/build.log"
+          FIRST=$(grep -n -m1 -E "What went wrong|Exception|FAILED|error:|^e: " "$LOG" | cut -d: -f1 || true)
+          FIRST=${FIRST:-$(( $(wc -l < "$LOG") - 60 ))}
+          START=$(( FIRST > 5 ? FIRST - 5 : 1 ))
+          sed -n "${START},$((START + 90))p" "$LOG" | cut -c1-500 | while IFS= read -r line; do
             [ -n "$line" ] && echo "::error title=build output::$line"
           done
-          echo "::error title=build output::(end of build output)"
+          echo "::error title=build output::(end of excerpt; total lines $(wc -l < "$LOG"))"
 
       - name: Upload build log
         if: always()
